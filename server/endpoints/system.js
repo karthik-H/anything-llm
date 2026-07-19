@@ -75,6 +75,10 @@ function systemEndpoints(app) {
     response.status(200).json({ online: true });
   });
 
+  app.get("/health", (_, response) => {
+    response.status(200).json({ status: "ok" });
+  });
+
   app.get("/migrate", async (_, response) => {
     response.sendStatus(200);
   });
