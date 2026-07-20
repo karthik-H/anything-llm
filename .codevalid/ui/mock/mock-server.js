@@ -1,75 +1,150 @@
-// mock-server.js
-// Lightweight HTTP mock server for AnythingLLM UI tests.
-//
-// Usage in tests (after importing):
-//   import { startMockServer, stopMockServer } from "../../mock/mock-server.js";
-//
-//   test.beforeAll(async () => { await startMockServer(); });
-//   test.afterAll(async  () => { await stopMockServer();  });
-//
-// All route handlers (mock data) live in mock-routes.js.
-// This file only wires up the server lifecycle; tests must NOT contain data.
+/**
+ * Mock API server for AnythingLLM UI testing.
+ * Intercepts all API calls so the frontend can render without a real backend.
+ * Runs on port 3001 to match VITE_API_BASE=http://localhost:3001/api
+ */
 
 import http from "http";
-import { getRoutes } from "./mock-routes.js";
 
-const DEFAULT_PORT = process.env.MOCK_SERVER_PORT
-  ? parseInt(process.env.MOCK_SERVER_PORT, 10)
-  : 4001;
-
-let server = null;
+const PORT = 3001;
 
 /**
- * Start the mock server on `port` (default: 4001).
- * Returns a Promise that resolves once the server is listening.
+ * Mock responses keyed by method + path prefix.
+ * All routes are under /api/
  */
-export function startMockServer(port = DEFAULT_PORT) {
-  if (server) {
-    return Promise.resolve(server);
+const routes = {
+  "GET /api/ping": () => ({ message: "pong" }),
+
+  // Auth / user system
+  "GET /api/auth": () => ({
+    authenticated: true,
+    user: null,
+  }),
+  "POST /api/request-token": () => ({
+    valid: true,
+    user: {
+      id: 1,
+      username: "testuser",
+      role: "admin",
+      suspended: 0,
+      createdAt: new Date().toISOString(),
+    },
+    token: "mock-jwt-token",
+  }),
+
+  // System settings
+  "GET /api/setup-complete": () => ({ isMultiUser: false }),
+  "GET /api/system/vector-count": () => ({ remoteCount: 0 }),
+  "GET /api/system/env-dump": () => ({
+    SystemSettings: {
+      multi_user_mode: false,
+      telemetry_id: "mock-telemetry",
+      jwt_secret: "mock-secret",
+      authToken: null,
+      footer_data: "[]",
+      support_email: null,
+      customization: null,
+      AgentGlobalSettings: {},
+    },
+  }),
+  "GET /api/system/logo": () => null, // handled separately
+  "GET /api/system/appearance": () => ({
+    headerImagePath: null,
+    loginPageCustomization: {},
+    supportEmail: null,
+    customAppName: null,
+    footerData: [],
+    noViewScrolling: false,
+    chatFontSize: "normal",
+    dynamicIconSetting: "none",
+    customCSS: null,
+  }),
+  "GET /api/system/user": () => ({
+    user: {
+      id: 1,
+      username: "testuser",
+      role: "admin",
+      suspended: 0,
+    },
+  }),
+  "GET /api/system/pfp": () => null,
+
+  // Workspaces
+  "GET /api/workspaces": () => ({ workspaces: [] }),
+  "GET /api/workspace": () => ({ workspace: null }),
+
+  // Onboarding
+  "GET /api/system/multi-user-mode": () => ({ multiUserMode: false }),
+
+  // Documents
+  "GET /api/documents": () => ({ documents: [], folders: [] }),
+};
+
+function matchRoute(method, url) {
+  const urlPath = url.split("?")[0];
+  const key = `${method} ${urlPath}`;
+
+  // Exact match
+  if (routes[key]) return routes[key];
+
+  // Prefix match for dynamic routes
+  for (const routeKey of Object.keys(routes)) {
+    const [rMethod, rPath] = routeKey.split(" ");
+    if (rMethod === method && urlPath.startsWith(rPath)) {
+      return routes[routeKey];
+    }
   }
 
-  const routes = getRoutes();
-
-  server = http.createServer((req, res) => {
-    const url = new URL(req.url, `http://localhost:${port}`);
-    const key = `${req.method} ${url.pathname}`;
-
-    const handler = routes[key];
-    if (handler) {
-      handler(req, res, url);
-    } else {
-      // Default: 404 with JSON body
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Not found", path: url.pathname }));
-    }
-  });
-
-  return new Promise((resolve, reject) => {
-    server.listen(port, "0.0.0.0", () => {
-      console.log(`[mock-server] Listening on http://localhost:${port}`);
-      resolve(server);
-    });
-    server.on("error", reject);
-  });
+  return null;
 }
 
-/**
- * Gracefully shut down the mock server.
- */
-export function stopMockServer() {
-  if (!server) {
-    return Promise.resolve();
-  }
-
-  return new Promise((resolve, reject) => {
-    server.close((err) => {
-      server = null;
-      if (err) {
-        reject(err);
-      } else {
-        console.log("[mock-server] Stopped.");
-        resolve();
+function readBody(req) {
+  return new Promise((resolve) => {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", () => {
+      try {
+        resolve(body ? JSON.parse(body) : {});
+      } catch {
+        resolve({});
       }
     });
   });
 }
+
+const server = http.createServer(async (req, res) => {
+  // CORS headers so browser-side requests succeed
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+
+  if (req.method === "OPTIONS") {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  const handler = matchRoute(req.method, req.url);
+
+  if (handler) {
+    await readBody(req);
+    const result = handler();
+    if (result === null) {
+      res.writeHead(204, { "Content-Type": "application/json" });
+      res.end();
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(result));
+    return;
+  }
+
+  // Default: return a generic 200 with empty data so the UI doesn't crash
+  console.log(`[mock-server] Unhandled: ${req.method} ${req.url}`);
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({}));
+});
+
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`[mock-server] Listening on http://0.0.0.0:${PORT}`);
+});

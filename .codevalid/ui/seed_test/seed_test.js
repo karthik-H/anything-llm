@@ -1,20 +1,24 @@
-// seed_test.js
-// Seed test: verifies the AnythingLLM frontend is reachable and renders the
-// expected page title inside the container.
-//
-// This file is intentionally free of mock data – all API mocking is handled
-// by the mock server in .codevalid/ui/mock/mock-server.js.
-//
-// Import helpers from .codevalid/ui/helpers/ if you need ExecutionRecorder:
-//   import { ExecutionRecorder } from "../helpers/execution-recorder.js";
+/**
+ * Seed test for AnythingLLM UI.
+ *
+ * Verifies that:
+ *  1. The Vite dev server is reachable on port 5174.
+ *  2. The page title contains "AnythingLLM".
+ *  3. The root #root element is present in the DOM.
+ *
+ * This test intentionally contains no mock data — all API mocking is
+ * handled by .codevalid/ui/mock/mock-server.js which runs on port 3001.
+ */
 
 import { test, expect } from "@playwright/test";
 
-test("seed – app is reachable and renders the correct page title", async ({ page }) => {
-  // Navigate to the root of the running Vite dev server (baseURL from playwright.config.js)
+test("app is reachable and renders the AnythingLLM page", async ({ page }) => {
   await page.goto("/");
 
-  // The <title> element in frontend/index.html is:
-  //   "AnythingLLM | Your personal LLM trained on anything"
+  // The page title must contain "AnythingLLM"
   await expect(page).toHaveTitle(/AnythingLLM/i);
+
+  // The React root element must be present
+  const root = page.locator("#root");
+  await expect(root).toBeAttached();
 });
