@@ -78,6 +78,9 @@ if (!!process.env.ENABLE_HTTPS) {
 }
 
 app.use("/api", apiRouter);
+app.get("/health", (_, response) => {
+  response.status(200).json({ status: "ok" });
+});
 systemEndpoints(apiRouter);
 extensionEndpoints(apiRouter);
 workspaceEndpoints(apiRouter);
