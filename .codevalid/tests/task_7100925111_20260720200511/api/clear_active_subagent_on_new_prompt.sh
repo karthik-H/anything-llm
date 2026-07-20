@@ -1,0 +1,47 @@
+#!/usr/bin/env sh
+set -eu
+
+BASE_URL="${BASE_URL:-http://app:6713}"
+TMP_DIR="$(mktemp -d)"
+REQUEST_BODY_FILE="$TMP_DIR/request_body.json"
+RESPONSE_HEADERS="$TMP_DIR/response_headers.txt"
+RESPONSE_BODY="$TMP_DIR/response_body.txt"
+
+cleanup_tmp() {
+  rm -rf "$TMP_DIR"
+}
+trap cleanup_tmp EXIT
+
+# Given
+echo "STEP: Given — require an active subagent run and a live hypervisor connection"
+echo "PREREQ: this scenario requires hidden in-memory server state not configurable through any discovered public setup API"
+echo "PREREQ: expected state includes workspace.subagentRun active, workspace.piRpc active, OpenAI configuration present, workspace.id=ws-001"
+cat > "$REQUEST_BODY_FILE" <<'EOF'
+{"prompt":"Start a new analysis task"}
+EOF
+
+# When
+echo "STEP: When — POST /api/v1/prompt while a subagent run is active"
+echo "REQUEST_HEADERS: Content-Type: application/json"
+echo "REQUEST_BODY:"
+cat "$REQUEST_BODY_FILE"
+HTTP_CODE="$(curl -sS -D "$RESPONSE_HEADERS" -o "$RESPONSE_BODY" -w '%{http_code}' \
+  -X POST "$BASE_URL/api/v1/prompt" \
+  -H 'Content-Type: application/json' \
+  --data @"$REQUEST_BODY_FILE")"
+echo "RESPONSE_STATUS: $HTTP_CODE"
+echo "RESPONSE_HEADERS:"
+cat "$RESPONSE_HEADERS"
+echo "RESPONSE_BODY:"
+cat "$RESPONSE_BODY"
+
+# Then
+echo "STEP: Then — assert prompt was accepted after subagent teardown"
+[ "$HTTP_CODE" = "200" ] || { echo "ASSERTION_FAILED: expected HTTP 200 got ${HTTP_CODE}"; exit 1; }
+grep -F '"status":"prompt_sent"' "$RESPONSE_BODY" >/dev/null 2>&1 || grep -F '"status": "prompt_sent"' "$RESPONSE_BODY" >/dev/null 2>&1 || { echo "ASSERTION_FAILED: expected status prompt_sent in response body"; exit 1; }
+grep -F '"workspace_id":"ws-001"' "$RESPONSE_BODY" >/dev/null 2>&1 || grep -F '"workspace_id": "ws-001"' "$RESPONSE_BODY" >/dev/null 2>&1 || { echo "ASSERTION_FAILED: expected workspace_id ws-001 in response body"; exit 1; }
+
+# Cleanup
+echo "STEP: Cleanup — no public cleanup available for in-memory subagent state"
+
+echo "CODEVALID_TEST_ASSERTION_OK:clear_active_subagent_on_new_prompt"

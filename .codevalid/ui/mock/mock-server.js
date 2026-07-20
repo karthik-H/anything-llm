@@ -5,6 +5,7 @@
  */
 
 import http from "http";
+import { MOCK_AGENT_SKILL_STATUS_DEFAULTS } from "./mock-data.js";
 
 const PORT = 3001;
 
@@ -13,7 +14,7 @@ const PORT = 3001;
  * All routes are under /api/
  */
 const routes = {
-  "GET /api/ping": () => ({ message: "pong" }),
+  "GET /api/ping": () => ({ message: "pong", online: true }),
 
   // Auth / user system
   "GET /api/auth": () => ({
@@ -31,10 +32,17 @@ const routes = {
     },
     token: "mock-jwt-token",
   }),
+  "GET /api/system/check-token": () => ({ success: true }),
+  "GET /api/system/refresh-user": () => ({
+    success: true,
+    user: { id: 1, username: "testuser", role: "admin" },
+    message: null,
+  }),
 
   // System settings
-  "GET /api/setup-complete": () => ({ isMultiUser: false }),
-  "GET /api/system/vector-count": () => ({ remoteCount: 0 }),
+  "GET /api/setup-complete": () => ({ results: { MultiUserMode: false } }),
+  "GET /api/system/local-files": () => ({ localFiles: [] }),
+  "GET /api/system/check-token": () => ({ success: true }),
   "GET /api/system/env-dump": () => ({
     SystemSettings: {
       multi_user_mode: false,
@@ -47,7 +55,7 @@ const routes = {
       AgentGlobalSettings: {},
     },
   }),
-  "GET /api/system/logo": () => null, // handled separately
+  "GET /api/system/logo": () => null,
   "GET /api/system/appearance": () => ({
     headerImagePath: null,
     loginPageCustomization: {},
@@ -68,6 +76,20 @@ const routes = {
     },
   }),
   "GET /api/system/pfp": () => null,
+  "GET /api/system/multi-user-mode": () => ({ multiUserMode: false }),
+
+  // Admin preferences used by settings pages
+  "POST /api/admin/system-preferences-by-fields": async (_req, body) => {
+    const fields = Array.isArray(body?.fields) ? body.fields : [];
+    const settings = {};
+    if (fields.includes("disabled_agent_skills")) settings.disabled_agent_skills = [];
+    if (fields.includes("default_agent_skills")) settings.default_agent_skills = ["gmail", "google-calendar"];
+    if (fields.includes("imported_agent_skills")) settings.imported_agent_skills = [];
+    if (fields.includes("active_agent_flows")) settings.active_agent_flows = [];
+    if (fields.includes("disabled_gmail_skills")) settings.disabled_gmail_skills = [];
+    if (fields.includes("disabled_google_calendar_skills")) settings.disabled_google_calendar_skills = [];
+    return { success: true, settings };
+  },
 
   // Workspaces
   "GET /api/workspaces": () => ({ workspaces: [] }),
@@ -78,16 +100,26 @@ const routes = {
 
   // Documents
   "GET /api/documents": () => ({ documents: [], folders: [] }),
+
+  // Agent skills
+  "GET /api/agent-skills/filesystem-agent/is-available": () => ({ available: false }),
+  "GET /api/agent-skills/create-files-agent/is-available": () => ({ available: false }),
+  "GET /api/admin/agent-skills/gmail/status": () => MOCK_AGENT_SKILL_STATUS_DEFAULTS.gmail,
+  "GET /api/admin/agent-skills/google-calendar/status": () => MOCK_AGENT_SKILL_STATUS_DEFAULTS.calendar,
+
+  // Agent flows
+  "GET /api/agent-flows/list": () => ({ success: true, flows: [] }),
+
+  // MCP servers
+  "GET /api/mcp-servers": () => ({ servers: [] }),
 };
 
 function matchRoute(method, url) {
   const urlPath = url.split("?")[0];
   const key = `${method} ${urlPath}`;
 
-  // Exact match
   if (routes[key]) return routes[key];
 
-  // Prefix match for dynamic routes
   for (const routeKey of Object.keys(routes)) {
     const [rMethod, rPath] = routeKey.split(" ");
     if (rMethod === method && urlPath.startsWith(rPath)) {
@@ -113,7 +145,6 @@ function readBody(req) {
 }
 
 const server = http.createServer(async (req, res) => {
-  // CORS headers so browser-side requests succeed
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
@@ -127,8 +158,8 @@ const server = http.createServer(async (req, res) => {
   const handler = matchRoute(req.method, req.url);
 
   if (handler) {
-    await readBody(req);
-    const result = handler();
+    const requestBody = await readBody(req);
+    const result = await handler(req, requestBody);
     if (result === null) {
       res.writeHead(204, { "Content-Type": "application/json" });
       res.end();
@@ -139,7 +170,6 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Default: return a generic 200 with empty data so the UI doesn't crash
   console.log(`[mock-server] Unhandled: ${req.method} ${req.url}`);
   res.writeHead(200, { "Content-Type": "application/json" });
   res.end(JSON.stringify({}));
