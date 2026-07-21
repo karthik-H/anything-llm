@@ -1,0 +1,149 @@
+## Issues fixed
+
+- **webServer was a single object, not an array**: The original `playwright.config.js` had `webServer` as a single object pointing only at the Vite dev server. The frontend makes API calls to `http://localhost:3001/api` (set via `VITE_API_BASE`), so without a mock API server running on port 3001, the app would fail to render. Fixed by replacing the single `webServer` object with an array of two entries: one for the mock server (`node .codevalid/ui/mock/mock-server.js`) and one for the Vite dev server (`npm run dev:frontend -- --port 5174 --strictPort --host 0.0.0.0`). Files touched: `.codevalid/ui/playwright.config.js`.
+
+- **VITE_API_BASE not set in the container**: The frontend `.env.example` defaults to `VITE_API_BASE='http://localhost:3001/api'` but the actual `.env` file is gitignored. Inside the Docker image the file would be absent, so Vite would have no API base. Fixed by adding `RUN echo "VITE_API_BASE=http://localhost:3001/api" > ./frontend/.env` in the Dockerfile after copying source. Files touched: `.codevalid/ui/Dockerfile`.
+
+- **Playwright `webServer` mock server URL must return 200**: Playwright polls the `url` field of a `webServer` entry to decide when the server is ready. The mock server's health check endpoint is `/api/ping` (returns `{"message":"pong"}`). Using `/api` alone returns `{}` (a 200) which also works, but `/api/ping` is explicit and unambiguous. Files touched: `.codevalid/ui/playwright.config.js`, `.codevalid/ui/mock/mock-server.js`.
+
+- **No seed test existed**: The config referenced `sample_test_cases/` as the fallback project directory but that directory does not exist in this repo. With no test files Playwright exits non-zero. Fixed by adding a `codevalid-seed-test` project entry pointing at `.codevalid/ui/seed_test/` and creating `.codevalid/ui/seed_test/seed_test.js` with one test that checks page title and `#root` presence. Files touched: `.codevalid/ui/playwright.config.js`, `.codevalid/ui/seed_test/seed_test.js`.
+
+- **Helper dependencies (AWS SDK) not installed inside the container**: `global-teardown.js` imports `upload-recordings-to-s3.js` which uses `@aws-sdk/client-s3` and `@aws-sdk/lib-storage`. These are not in any `package.json` that gets installed inside the image. Fixed by adding an `npm install` step in the Dockerfile scoped to `.codevalid/ui/`. Files touched: `.codevalid/ui/Dockerfile`.
+
+- **`buildTaskProjects` fallback only listed `sample_test_cases`**: When no `task_*` folders exist under `.codevalid/ui/test/`, the original fallback project pointed at `sample_test_cases/` which does not exist. The seed test directory would therefore never run. Fixed by prepending the `codevalid-seed-test` project (pointing at `seed_test/`) before the `codevalid-sample-test` project in the fallback array. Files touched: `.codevalid/ui/playwright.config.js`.
+
+- **Vite dev server binds to localhost by default**: Inside a container the default `host: "localhost"` in `vite.config.js` means the server only accepts loopback connections, which is fine for Playwright (also running in the same container), but the `--host 0.0.0.0` flag added to the webServer command makes the port reachable from docker healthcheck tooling or external probes if needed. Files touched: `.codevalid/ui/playwright.config.js` (webServer command argument).
+
+
+## Import and config reference paths
+
+`.codevalid/ui/playwright.config.js`
+  — Master Playwright config. Read this first before creating any test or project.
+  — Defines `appRoot` (env APP_ROOT or two levels up from the config file), `uiRoot`, `uiTestsDir` (`.codevalid/ui/test`), reporter output dirs, the `webServer` array, and `buildTaskProjects()`.
+  — `baseURL` is `http://localhost:5174`.
+  — `testMatch` for task projects is `**/*.spec.js`; for fallback (seed/sample) projects it is `**/*.js`.
+
+`.codevalid/ui/helpers/execution-recorder.js`
+  — Import `ExecutionRecorder` from this path in every test file that should produce flow recordings.
+  — Constructor: `new ExecutionRecorder("acceptance-criteria-id", "human title")` or `new ExecutionRecorder({ testId, testTitle })`.
+  — Call `recorder.record("step description")` / `recorder.step("label", async fn)` during the test.
+  — Call `await recorder.save(testInfo)` in the test body (pass the second `testInfo` argument from the `test` callback).
+
+`.codevalid/ui/helpers/task-folder.js`
+  — Exports `getTaskFolders`, `getTaskRecordingsDir`, `getRunResultsDir`, `discoverTaskRecordingsDirs`, `resolveReportTaskFolder`, `getTaskFolderFromPath`.
+  — Used internally by `playwright.config.js` and `execution-recorder.js`. Import when you need to resolve recording/output paths programmatically.
+
+`.codevalid/ui/helpers/print-execution-results.js`
+  — Exports `printExecutionResults` and `writeSuiteResultFiles`.
+  — Exports the constant `SUITE_RESULT_FILES = ["execution-results.json", "coverage-report.json"]`.
+  — Run as a script (`node .codevalid/ui/helpers/print-execution-results.js`) to generate suite-level JSON result files after tests complete.
+
+`.codevalid/ui/helpers/upload-recordings-to-s3.js`
+  — Exports `uploadRecordingsToS3(options)`.
+  — Called automatically from `global-teardown.js`. Do not call directly from tests.
+  — Reads `S3_BUCKET`, `WORKSPACE_ID`, `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` from env. Silently skips upload if `S3_BUCKET` or `WORKSPACE_ID` are absent.
+
+`.codevalid/ui/global-teardown.js`
+  — Registered as `globalTeardown` in `playwright.config.js`.
+  — Only calls `uploadRecordingsToS3()`. Do not modify.
+
+`.codevalid/ui/mock/mock-server.js`
+  — Pure Node `http` server, no framework.
+  — Listens on port 3001 (`0.0.0.0`) to serve all `/api/*` stub responses.
+  — Route table is the `routes` object keyed by `"METHOD /api/path"`. Add new routes here when a test needs an API endpoint that is not yet stubbed.
+  — Falls back to `{}` with HTTP 200 for any unrecognised route (safe default so the UI does not crash).
+  — Contains NO test data. Data shaping belongs here; assertions belong in test files.
+
+`.codevalid/ui/seed_test/seed_test.js`
+  — Single smoke test: loads `/`, checks `toHaveTitle(/AnythingLLM/i)`, checks `#root` is attached.
+  — Used as the default project when no `task_*` folders exist.
+  — Template for the minimal viable test structure; copy and extend for new task tests.
+
+`.codevalid/ui/Dockerfile`
+  — Build context is the repository root (pass `-f .codevalid/ui/Dockerfile` with context `..` or `.`).
+  — Base image: `node:18-bookworm-slim`.
+  — Copies `frontend/package.json` + `frontend/yarn.lock`, runs `yarn install --frozen-lockfile`, then copies the rest of `frontend/` for layer-cache efficiency.
+  — Copies `.codevalid/ui/` into the image.
+  — Installs `@aws-sdk/client-s3`, `@aws-sdk/lib-storage`, and `@playwright/test` under `.codevalid/ui/` (for helpers).
+  — Writes `frontend/.env` with `VITE_API_BASE=http://localhost:3001/api`.
+  — Sets `ENV CI=true APP_ROOT=/app`.
+  — `ENTRYPOINT ["npx", "playwright", "test", "--config", ".codevalid/ui/playwright.config.js", "--reporter=json"]`.
+
+`frontend/package.json`
+  — Defines the `dev` script: `cross-env NODE_ENV=development vite --debug --host=0.0.0.0`.
+  — Root `package.json` wraps it as `npm run dev:frontend` → `cd frontend && yarn dev`.
+  — Stack: React 18, Vite 4, Tailwind 3, react-router-dom v6.
+
+`frontend/.env` (generated at build time, not committed)
+  — Must contain `VITE_API_BASE=http://localhost:3001/api` when running inside Docker.
+  — The Dockerfile `RUN echo` step creates this file; it overrides the gitignored copy.
+
+
+## Conventions to preserve
+
+**Folder layout for task tests**
+  — Each task gets its own directory: `.codevalid/ui/test/task_<timestamp>_<id>/`.
+  — Test files inside use the `.spec.js` extension (matched by `testMatch: "**/*.spec.js"`).
+  — The seed test and any sample tests use `.js` (no `.spec.` infix) because they live outside the `test/` subtree and use a separate `testMatch: "**/*.js"` project entry.
+
+**Mock server vs test separation**
+  — All API response shapes and mock data live exclusively in `.codevalid/ui/mock/mock-server.js`.
+  — Test files contain only Playwright actions and assertions. No hardcoded API response bodies in test files.
+  — When a new API endpoint is needed, add a route to `mock-server.js`; the test simply navigates/interacts as a user would.
+
+**How the app is started for Playwright**
+  — Playwright's `webServer` array (in `playwright.config.js`) is the sole mechanism for starting services.
+  — Entry 0: mock server, command `node <uiRoot>/mock/mock-server.js`, readiness URL `http://localhost:3001/api/ping`.
+  — Entry 1: Vite dev server, command `npm run dev:frontend -- --port 5174 --strictPort --host 0.0.0.0`, readiness URL `http://localhost:5174`.
+  — `reuseExistingServer: !process.env.CI` — servers are reused in local dev; always re-launched in CI/Docker (`CI=true`).
+  — Do NOT start servers manually in a Dockerfile `CMD` or entrypoint script; let Playwright manage the lifecycle.
+
+**Reporter setup**
+  — Three reporters are always registered: `list` (stdout), `html` (into `recording/<taskFolder>/report/`), `json` (into `recording/<taskFolder>/test-results.json`).
+  — The JSON reporter output path is derived from `reportDir` which in turn depends on `CODEVALID_TASK_FOLDER` env var or the first discovered task folder.
+  — Do not change reporter configuration without also verifying `print-execution-results.js` still finds the JSON file (it searches a fixed candidate list).
+
+**ExecutionRecorder usage**
+  — Every acceptance-criteria test should instantiate `ExecutionRecorder` and call `save(testInfo)`.
+  — The `acceptanceCriteriaId` must match the file base name (without `.spec.js`) for `print-execution-results.js` to correlate flow recordings with Playwright results.
+  — Steps recorded via `recorder.record()` are stored as JSON in `recording/<taskFolder>/flows/`.
+
+**Playwright project names**
+  — Task projects are named after the folder: `task_<timestamp>_<id>`.
+  — Fallback/seed project name: `codevalid-seed-test`.
+  — Sample project name: `codevalid-sample-test`.
+  — Project `outputDir` always resolves to `recording/<projectName>/test-results/`.
+
+**Node / package manager split**
+  — `frontend/` uses yarn with a lockfile; always install with `yarn install --frozen-lockfile`.
+  — Root-level and `.codevalid/ui/` use npm; install helpers with `npm install`.
+  — Do not cross the boundaries (do not run `npm install` inside `frontend/`).
+
+**`APP_ROOT` env var**
+  — `playwright.config.js` resolves the app root via `process.env.APP_ROOT` falling back to two directories above the config file.
+  — Inside Docker this is `/app` (set as `ENV APP_ROOT=/app`).
+  — Always set `APP_ROOT` explicitly in any non-standard execution context.
+
+**`CI=true` behaviour**
+  — Sets `forbidOnly: true` (test.only calls will fail the run).
+  — Sets `reuseExistingServer: false` (both webServer entries are always started fresh).
+  — The Dockerfile sets `ENV CI=true` permanently.
+
+
+## Do not repeat
+
+- Do not add server startup logic to the Dockerfile `CMD`, a custom entrypoint script, or a shell wrapper. The `webServer` array in `playwright.config.js` is the correct and only place to start services for Playwright. A separate entrypoint script was drafted during this session but is not needed and should not be used.
+
+- Do not place mock data or API response bodies inside test files. Any temptation to inline `{ workspaces: [] }` or similar in a `test()` block should be redirected to `mock/mock-server.js`.
+
+- Do not use `sample_test_cases/` as the primary fallback project. That directory does not exist in this repository. The correct fallback is `seed_test/` (`codevalid-seed-test` project).
+
+- Do not forget to write `frontend/.env` inside the Docker image. The file is gitignored and will not be present in the build context. Without it `VITE_API_BASE` is undefined and the frontend will either use a wrong default or fail to make API calls, causing the UI to hang on load.
+
+- Do not bind the Vite server to `localhost` only when running in Docker. The `vite.config.js` default is `host: "localhost"`. Always pass `--host 0.0.0.0` in the webServer command so the server is reachable from health-check tooling.
+
+- Do not omit `@aws-sdk/client-s3`, `@aws-sdk/lib-storage`, and `@playwright/test` from the `.codevalid/ui/` install step in the Dockerfile. The global teardown imports the AWS SDK; missing it causes a runtime crash after tests finish, corrupting the exit code.
+
+- Do not change the `ENTRYPOINT` format. It must remain the JSON array form: `ENTRYPOINT ["npx", "playwright", "test", "--config", ".codevalid/ui/playwright.config.js", "--reporter=json"]`. Shell form would prevent signal propagation and break the CodeValid harness.
+
+- Do not modify `global-teardown.js` or the upload logic in `upload-recordings-to-s3.js`. These are infrastructure files managed by the platform. Only add routes to `mock-server.js` and test files to `test/task_*/` or `seed_test/`.

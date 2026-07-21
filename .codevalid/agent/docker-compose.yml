@@ -1,0 +1,58 @@
+services:
+  toxiproxy:
+    build: { context: ./toxiproxy, dockerfile: Dockerfile }
+    command: ["-host=0.0.0.0", "-config=/config/toxiproxy.json"]
+    healthcheck:
+      test: ["CMD", "/bin/busybox", "wget", "-q", "-O", "/dev/null", "http://localhost:8474/version"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    networks: [codevalid]
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: appdb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d appdb"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    networks: [codevalid]
+
+  wiremock:
+    build: { context: ./wiremock, dockerfile: Dockerfile }
+    command: ["--global-response-templating", "--disable-gzip", "--verbose"]
+    networks: [codevalid]
+
+  seed-test:
+    profiles: ["test"]
+    build: { context: ./promptfoo, dockerfile: seed-test.Dockerfile }
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      LITELLM_API_KEY: "${LITELLM_API_KEY}"
+      LITELLM_BASE_URL: "${LITELLM_BASE_URL}"
+    networks: [codevalid]
+
+  agent-eval:
+    profiles: ["test"]
+    build:
+      context: ../..
+      dockerfile: .codevalid/agent/promptfoo/agent-eval.Dockerfile
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      LITELLM_API_KEY: "${LITELLM_API_KEY}"
+      LITELLM_BASE_URL: "${LITELLM_BASE_URL}"
+      PROMPTFOO_DISABLE_TELEMETRY: "1"
+    working_dir: /workspace
+    command:
+      - "-c"
+      - ".codevalid/agent/eval/task_8592361752_20260704033217/invoke/promptfooconfig.yaml"
+    networks: [codevalid]
+
+networks:
+  codevalid:

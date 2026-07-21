@@ -1,15 +1,17 @@
 // mock-data.js
 // Static mock data for the AnythingLLM UI test suite.
 //
-// Only data lives here. Logic/server setup is in mock-server.js and
-// mock-routes.js. Test files must NOT import data directly – they should
+// Only data lives here.  Logic/server setup is in mock-server.js and
+// mock-routes.js.  Test files must NOT import data directly – they should
 // rely on the mock server to serve it.
 
+// ── Health ──────────────────────────────────────────────────────────────────
 export const MOCK_HEALTH = {
   online: true,
   version: "0.0.0-test",
 };
 
+// ── Auth / current user ──────────────────────────────────────────────────────
 export const MOCK_AUTH_USER = {
   authenticated: true,
   user: {
@@ -19,6 +21,7 @@ export const MOCK_AUTH_USER = {
   },
 };
 
+// ── Workspaces ───────────────────────────────────────────────────────────────
 export const MOCK_WORKSPACES = {
   workspaces: [
     {
@@ -28,23 +31,4 @@ export const MOCK_WORKSPACES = {
       createdAt: "2024-01-01T00:00:00.000Z",
     },
   ],
-};
-
-export const MOCK_AGENT_SKILL_STATUS_DEFAULTS = {
-  gmail: {
-    success: true,
-    isConfigured: false,
-    config: {
-      deploymentId: "",
-      apiKey: "",
-    },
-  },
-  calendar: {
-    success: true,
-    isConfigured: false,
-    config: {
-      deploymentId: "",
-      apiKey: "",
-    },
-  },
 };
