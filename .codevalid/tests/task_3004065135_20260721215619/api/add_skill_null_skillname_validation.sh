@@ -17,15 +17,17 @@ cat > "$REQUEST_BODY_FILE" <<EOF
 {"skillName":null}
 EOF
 
-echo "STEP: Given — caller context assumed and null skillName request prepared"
-echo "PREREQ: this test assumes the environment provides a valid authenticated session if the app requires one"
+# Given — bring the system to the required state
+echo "STEP: Given — prepare request body with null skillName"
+echo "PREREQ: this test assumes the environment provides a valid authenticated session if middleware requires it"
 
-echo "STEP: When — POST /agent-skills/whitelist/add with skillName null"
+# When — perform the action under test
+echo "STEP: When — POST add skill with null skillName"
 echo "REQUEST_HEADERS: Content-Type: application/json"
 echo "REQUEST_BODY:"
 cat "$REQUEST_BODY_FILE"
 code=$(curl -sS -D "$HEADERS_FILE" -o "$BODY_FILE" -w '%{http_code}' \
-  -X POST "$BASE_URL/agent-skills/whitelist/add" \
+  -X POST "$BASE_URL/api/agent-skills/whitelist/add" \
   -H 'Content-Type: application/json' \
   --data-binary @"$REQUEST_BODY_FILE")
 echo "RESPONSE_HEADERS:"
@@ -34,12 +36,14 @@ echo "RESPONSE_BODY:"
 cat "$BODY_FILE"
 echo "RESPONSE_STATUS: $code"
 
+# Then — HTTP/body assertions
 echo "STEP: Then — validation error is returned for null skillName"
 [ "$code" = "400" ] || { echo "ASSERTION_FAILED: expected HTTP 400 got ${code}"; exit 1; }
-grep -F '"success":false' "$BODY_FILE" >/dev/null || { echo "ASSERTION_FAILED: expected response body to contain \"success\":false"; exit 1; }
+grep -F '"success":false' "$BODY_FILE" >/dev/null || { echo "ASSERTION_FAILED: expected response body to contain success false"; exit 1; }
 grep -F 'Missing skillName' "$BODY_FILE" >/dev/null || { echo "ASSERTION_FAILED: expected response body to contain Missing skillName"; exit 1; }
 
+# Cleanup — undo Given side effects
 echo "STEP: Cleanup — stateless validation case"
-echo "PREREQ: no cleanup required because request should not create data"
+echo "PREREQ: no cleanup required because invalid request should not create data"
 
 echo "CODEVALID_TEST_ASSERTION_OK:add_skill_null_skillname_validation"
